@@ -1,7 +1,11 @@
 import {
   Box,
+  Check,
+  Command,
   Copy,
   DoorOpen,
+  Eye,
+  EyeOff,
   Grid3X3,
   Layers3,
   Maximize,
@@ -12,12 +16,14 @@ import {
   RotateCw,
   Ruler,
   Save,
+  Search,
   Square,
   Trash2,
   Undo2,
   AppWindow,
   ZoomIn,
   ZoomOut,
+  X,
 } from 'lucide-react'
 import {
   useCallback,
@@ -150,6 +156,13 @@ type FurnitureDraft = {
   heightCm: number
 }
 
+type CommandItem = {
+  id: string
+  label: string
+  shortcut: string
+  disabled?: boolean
+}
+
 type ThreeViewMode = 'orbit' | 'top' | 'eye'
 
 const STORAGE_KEY = 'deulim.floor-plan.v1'
@@ -174,16 +187,17 @@ const toolItems: Array<{
   id: Tool
   label: string
   icon: typeof MousePointer2
+  shortcut?: string
 }> = [
-  { id: 'select', label: '선택', icon: MousePointer2 },
-  { id: 'wall', label: '벽 그리기', icon: PenLine },
+  { id: 'select', label: '선택', icon: MousePointer2, shortcut: 'V' },
+  { id: 'wall', label: '벽 그리기', icon: PenLine, shortcut: 'L' },
   { id: 'rectangle', label: '직사각형 방', icon: Square },
   { id: 'structure', label: '구조물', icon: Box },
-  { id: 'door', label: '문 추가', icon: DoorOpen },
-  { id: 'window', label: '창문 추가', icon: AppWindow },
-  { id: 'furniture', label: '가구 배치', icon: Box },
-  { id: 'measure', label: '치수 측정', icon: Ruler },
-  { id: 'pan', label: '화면 이동', icon: Move },
+  { id: 'door', label: '문 추가', icon: DoorOpen, shortcut: 'D' },
+  { id: 'window', label: '창문 추가', icon: AppWindow, shortcut: 'N' },
+  { id: 'furniture', label: '가구 배치', icon: Box, shortcut: 'B' },
+  { id: 'measure', label: '치수 측정', icon: Ruler, shortcut: 'M' },
+  { id: 'pan', label: '화면 이동', icon: Move, shortcut: 'H' },
 ]
 
 function makeId(prefix: string) {
@@ -603,6 +617,8 @@ function polygonCenter(points: Point[]) {
 
 function App() {
   const canvasRef = useRef<SVGSVGElement | null>(null)
+  const wallLengthInputRef = useRef<HTMLInputElement | null>(null)
+  const commandInputRef = useRef<HTMLInputElement | null>(null)
   const [history, setHistory] = useState<HistoryState>(() => ({
     plan: loadPlan(),
     past: [],
@@ -613,6 +629,11 @@ function App() {
   const [drawPoints, setDrawPoints] = useState<Point[]>([])
   const [hoverPoint, setHoverPoint] = useState<Point | null>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
+  const [spacePan, setSpacePan] = useState(false)
+  const [draftLengthCm, setDraftLengthCm] = useState('')
+  const [commandOpen, setCommandOpen] = useState(false)
+  const [commandQuery, setCommandQuery] = useState('')
+  const [commandIndex, setCommandIndex] = useState(0)
   const [viewport, setViewport] = useState<Viewport>({
     zoom: 1,
     pan: { x: 160, y: 110 },
@@ -626,6 +647,7 @@ function App() {
   })
 
   const plan = history.plan
+  const effectiveTool: Tool = spacePan ? 'pan' : tool
   const polygon = useMemo(() => getClosedPolygon(plan.walls), [plan.walls])
   const warnings = useMemo(() => collectWarnings(plan), [plan])
   const selectedWall = selected?.type === 'wall' ? plan.walls.find((wall) => wall.id === selected.id) : null
@@ -637,6 +659,12 @@ function App() {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(plan))
   }, [plan])
+
+  useEffect(() => {
+    if (commandOpen) {
+      requestAnimationFrame(() => commandInputRef.current?.focus())
+    }
+  }, [commandOpen])
 
   const replaceLivePlan = useCallback((nextPlan: FloorPlan) => {
     setHistory((current) => ({
@@ -718,6 +746,7 @@ function App() {
       if (drawPoints.length === 0) {
         setDrawPoints([point])
         setHoverPoint(point)
+        setDraftLengthCm('')
         return
       }
 
@@ -740,10 +769,12 @@ function App() {
         )
         setDrawPoints([])
         setHoverPoint(null)
+        setDraftLengthCm('')
         return
       }
 
       setDrawPoints((current) => [...current, point])
+      setDraftLengthCm('')
     },
     [commitPlan, drawPoints],
   )
@@ -758,7 +789,30 @@ function App() {
     commitPlan((draft) => ({ ...draft, walls: [...draft.walls, ...nextWalls] }))
     setDrawPoints([])
     setHoverPoint(null)
+    setDraftLengthCm('')
   }, [commitPlan, drawPoints])
+
+  const commitExactWallLength = useCallback(() => {
+    const lastPoint = drawPoints.at(-1)
+    const lengthCm = Number(draftLengthCm)
+    if (!lastPoint || !Number.isFinite(lengthCm) || lengthCm <= 0) {
+      return
+    }
+
+    const directionPoint = hoverPoint && distance(lastPoint, hoverPoint) > 0.5
+      ? hoverPoint
+      : { x: lastPoint.x + 1, y: lastPoint.y }
+    const directionLength = distance(lastPoint, directionPoint)
+    const nextPoint = {
+      x: lastPoint.x + ((directionPoint.x - lastPoint.x) / directionLength) * lengthCm,
+      y: lastPoint.y + ((directionPoint.y - lastPoint.y) / directionLength) * lengthCm,
+    }
+
+    addWallPoint(nextPoint)
+    setHoverPoint(nextPoint)
+    setDraftLengthCm('')
+    wallLengthInputRef.current?.blur()
+  }, [addWallPoint, draftLengthCm, drawPoints, hoverPoint])
 
   const placeOpening = useCallback(
     (type: OpeningType, point: Point) => {
@@ -884,6 +938,43 @@ function App() {
     }))
   }, [commitPlan, selected])
 
+  const nudgeSelection = useCallback((xCm: number, yCm: number) => {
+    if (selected?.type === 'asset') {
+      commitPlan((draft) => ({
+        ...draft,
+        assets: draft.assets.map((asset) =>
+          asset.id === selected.id
+            ? { ...asset, x: asset.x + xCm, y: asset.y + yCm }
+            : asset,
+        ),
+      }))
+      return
+    }
+
+    if (selected?.type === 'opening' && xCm !== 0) {
+      commitPlan((draft) => ({
+        ...draft,
+        openings: draft.openings.map((opening) => {
+          if (opening.id !== selected.id) {
+            return opening
+          }
+          const wall = draft.walls.find((item) => item.id === opening.wallId)
+          if (!wall) {
+            return opening
+          }
+          return {
+            ...opening,
+            offsetCm: clamp(
+              opening.offsetCm + xCm,
+              opening.widthCm / 2,
+              Math.max(opening.widthCm / 2, wallLength(wall) - opening.widthCm / 2),
+            ),
+          }
+        }),
+      }))
+    }
+  }, [commitPlan, selected])
+
   const fitView = useCallback(() => {
     const bounds = canvasRef.current?.getBoundingClientRect()
     if (!bounds) {
@@ -910,34 +1001,34 @@ function App() {
     const rawPoint = screenToWorld(event.clientX, event.clientY)
     const snappedPoint = snapWorldPoint(rawPoint, plan, drawPoints, event.shiftKey)
 
-    if (tool === 'wall') {
+    if (effectiveTool === 'wall') {
       addWallPoint(snappedPoint)
       return
     }
 
-    if (tool === 'rectangle') {
+    if (effectiveTool === 'rectangle') {
       createRectangleRoom()
       setTool('select')
       return
     }
 
-    if (tool === 'structure') {
+    if (effectiveTool === 'structure') {
       drawStructure()
       setTool('select')
       return
     }
 
-    if (tool === 'door' || tool === 'window') {
-      placeOpening(tool, snappedPoint)
+    if (effectiveTool === 'door' || effectiveTool === 'window') {
+      placeOpening(effectiveTool, snappedPoint)
       return
     }
 
-    if (tool === 'furniture') {
+    if (effectiveTool === 'furniture') {
       placeFurniture(snappedPoint)
       return
     }
 
-    if (tool === 'pan') {
+    if (effectiveTool === 'pan') {
       setDrag({
         type: 'pan',
         startScreen: clientToCanvas(event.clientX, event.clientY),
@@ -954,8 +1045,12 @@ function App() {
     const rawPoint = screenToWorld(event.clientX, event.clientY)
     const snappedPoint = snapWorldPoint(rawPoint, plan, drawPoints, event.shiftKey)
 
-    if (tool === 'wall') {
+    if (effectiveTool === 'wall') {
       setHoverPoint(snappedPoint)
+      const lastPoint = drawPoints.at(-1)
+      if (lastPoint && wallLengthInputRef.current !== document.activeElement) {
+        setDraftLengthCm(String(roundCm(distance(lastPoint, snappedPoint))))
+      }
     }
 
     if (!drag) {
@@ -1099,15 +1194,80 @@ function App() {
     event.dataTransfer.effectAllowed = 'copy'
   }
 
-  const savePlan = () => {
+  const savePlan = useCallback(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(plan))
     setSavedAt(new Date().toLocaleTimeString('ko-KR'))
-  }
+  }, [plan])
 
   const resetPlan = () => {
     commitPlan(() => clonePlan(emptyPlan), null)
     setDrawPoints([])
     setHoverPoint(null)
+    setDraftLengthCm('')
+  }
+
+  const openCommandPalette = useCallback(() => {
+    setCommandQuery('')
+    setCommandIndex(0)
+    setCommandOpen(true)
+  }, [])
+
+  const closeCommandPalette = useCallback(() => {
+    setCommandOpen(false)
+    setCommandQuery('')
+    setCommandIndex(0)
+  }, [])
+
+  const commandItems: CommandItem[] = [
+    { id: 'select', label: '선택 도구', shortcut: 'V' },
+    { id: 'wall', label: '벽 그리기', shortcut: 'L' },
+    { id: 'door', label: '문 추가', shortcut: 'D' },
+    { id: 'window', label: '창문 추가', shortcut: 'N' },
+    { id: 'furniture', label: '가구 배치', shortcut: 'B' },
+    { id: 'pan', label: '화면 이동', shortcut: 'H' },
+    { id: 'fit', label: '2D 화면 맞춤', shortcut: 'F' },
+    { id: 'undo', label: '실행 취소', shortcut: 'Ctrl Z', disabled: history.past.length === 0 },
+    { id: 'redo', label: '다시 실행', shortcut: 'Ctrl Y', disabled: history.future.length === 0 },
+    { id: 'rotate', label: '선택 가구 회전', shortcut: 'R', disabled: selected?.type !== 'asset' },
+    { id: 'duplicate', label: '선택 가구 복제', shortcut: 'Ctrl D', disabled: selected?.type !== 'asset' },
+    { id: 'delete', label: '선택 객체 삭제', shortcut: 'Delete', disabled: !selected || selected.type === 'floor' },
+    { id: 'save', label: '도면 저장', shortcut: 'Ctrl S' },
+  ]
+
+  const filteredCommands = commandItems.filter((item) =>
+    item.label.toLocaleLowerCase('ko-KR').includes(commandQuery.trim().toLocaleLowerCase('ko-KR')),
+  )
+
+  const runCommand = (item: CommandItem) => {
+    if (item.disabled) {
+      return
+    }
+    const toolCommands: Partial<Record<string, Tool>> = {
+      select: 'select',
+      wall: 'wall',
+      door: 'door',
+      window: 'window',
+      furniture: 'furniture',
+      pan: 'pan',
+    }
+    if (toolCommands[item.id]) {
+      setTool(toolCommands[item.id]!)
+    } else if (item.id === 'fit') {
+      fitView()
+    } else if (item.id === 'undo') {
+      undo()
+    } else if (item.id === 'redo') {
+      redo()
+    } else if (item.id === 'rotate') {
+      rotateSelection()
+    } else if (item.id === 'duplicate') {
+      duplicateSelection()
+    } else if (item.id === 'delete') {
+      deleteSelection()
+    } else if (item.id === 'save') {
+      savePlan()
+    }
+    closeCommandPalette()
   }
 
   useEffect(() => {
@@ -1119,30 +1279,134 @@ function App() {
         target instanceof HTMLSelectElement ||
         target?.isContentEditable
 
+      const key = event.key.toLowerCase()
+
+      if ((event.ctrlKey || event.metaKey) && key === 'k') {
+        event.preventDefault()
+        openCommandPalette()
+        return
+      }
+      if (event.key === '?' && !isEditing) {
+        event.preventDefault()
+        openCommandPalette()
+        return
+      }
       if (event.key === 'Escape') {
+        if (commandOpen) {
+          closeCommandPalette()
+          return
+        }
         setDrawPoints([])
         setHoverPoint(null)
+        setDraftLengthCm('')
         setDrag(null)
+        setSpacePan(false)
+        return
+      }
+      if ((event.ctrlKey || event.metaKey) && key === 'z') {
+        event.preventDefault()
+        if (event.shiftKey) {
+          redo()
+        } else {
+          undo()
+        }
+        return
+      }
+      if ((event.ctrlKey || event.metaKey) && key === 'y') {
+        event.preventDefault()
+        redo()
+        return
+      }
+      if ((event.ctrlKey || event.metaKey) && key === 's') {
+        event.preventDefault()
+        savePlan()
+        return
+      }
+      if ((event.ctrlKey || event.metaKey) && key === 'd' && !isEditing) {
+        event.preventDefault()
+        duplicateSelection()
+        return
+      }
+      if (isEditing || commandOpen) {
+        return
+      }
+      if (event.code === 'Space') {
+        event.preventDefault()
+        setSpacePan(true)
+        return
+      }
+      if (tool === 'wall' && drawPoints.length > 0 && /^[0-9.]$/.test(event.key)) {
+        event.preventDefault()
+        setDraftLengthCm(event.key)
+        requestAnimationFrame(() => wallLengthInputRef.current?.focus())
+        return
       }
       if (event.key === 'Enter' && drawPoints.length > 1) {
         finishOpenWallDrawing()
+        return
       }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+      if (event.key === 'Backspace' && drawPoints.length > 0) {
         event.preventDefault()
-        undo()
+        setDrawPoints((current) => current.slice(0, -1))
+        setHoverPoint(drawPoints.length > 1 ? drawPoints.at(-2) ?? null : null)
+        setDraftLengthCm('')
+        return
       }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
+      if (event.key.startsWith('Arrow') && selected) {
+        const step = event.shiftKey ? 10 : 1
+        const movement = {
+          ArrowLeft: [-step, 0],
+          ArrowRight: [step, 0],
+          ArrowUp: [0, -step],
+          ArrowDown: [0, step],
+        }[event.key]
+        if (movement) {
+          event.preventDefault()
+          nudgeSelection(movement[0], movement[1])
+          return
+        }
+      }
+      const toolShortcut: Partial<Record<string, Tool>> = {
+        v: 'select',
+        l: 'wall',
+        d: 'door',
+        n: 'window',
+        b: 'furniture',
+        m: 'measure',
+        h: 'pan',
+      }
+      if (toolShortcut[key]) {
         event.preventDefault()
-        redo()
+        setTool(toolShortcut[key]!)
+        return
+      }
+      if (key === 'f') {
+        event.preventDefault()
+        fitView()
+        return
+      }
+      if (key === 'r' && selected?.type === 'asset') {
+        event.preventDefault()
+        rotateSelection()
+        return
       }
       if (!isEditing && (event.key === 'Delete' || event.key === 'Backspace')) {
         event.preventDefault()
         deleteSelection()
       }
     }
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.code === 'Space') {
+        setSpacePan(false)
+      }
+    }
     window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [deleteSelection, drawPoints.length, finishOpenWallDrawing, redo, undo])
+    window.addEventListener('keyup', handleKeyUp)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+    }
+  }, [closeCommandPalette, commandOpen, deleteSelection, drawPoints, duplicateSelection, finishOpenWallDrawing, fitView, nudgeSelection, openCommandPalette, redo, rotateSelection, savePlan, selected, tool, undo])
 
   const selectedLabel =
     selectedWall
@@ -1165,6 +1429,18 @@ function App() {
           <h1>직접 그리는 실측 공간 편집기</h1>
         </div>
         <div className="topbar-actions">
+          <span className="autosave-status">{savedAt ? `저장 ${savedAt}` : '자동 저장'}</span>
+          <button
+            type="button"
+            className="command-trigger"
+            onClick={openCommandPalette}
+            aria-label="명령 팔레트"
+            title="명령 팔레트 (Ctrl+K)"
+            data-testid="command-trigger"
+          >
+            <Search size={16} />
+            <span>명령</span>
+          </button>
           <button type="button" className="icon-button" onClick={undo} disabled={history.past.length === 0} aria-label="실행 취소">
             <Undo2 size={18} />
           </button>
@@ -1189,11 +1465,12 @@ function App() {
                 className={`tool-button ${tool === item.id ? 'active' : ''}`}
                 onClick={() => setTool(item.id)}
                 aria-label={item.label}
-                title={item.label}
+                title={`${item.label}${item.shortcut ? ` (${item.shortcut})` : ''}`}
                 data-testid={`tool-${item.id}`}
               >
                 <Icon size={19} />
                 <span>{item.label}</span>
+                {item.shortcut && <kbd>{item.shortcut}</kbd>}
               </button>
             )
           })}
@@ -1236,10 +1513,43 @@ function App() {
             </div>
           </div>
 
+          {tool === 'wall' && drawPoints.length > 0 && (
+            <form
+              className="precision-hud"
+              data-testid="precision-hud"
+              onSubmit={(event) => {
+                event.preventDefault()
+                commitExactWallLength()
+              }}
+            >
+              <label htmlFor="draft-wall-length">벽 길이</label>
+              <div className="precision-input-wrap">
+                <input
+                  ref={wallLengthInputRef}
+                  id="draft-wall-length"
+                  type="number"
+                  min="1"
+                  step="1"
+                  inputMode="decimal"
+                  value={draftLengthCm}
+                  onChange={(event) => setDraftLengthCm(event.target.value)}
+                  onFocus={(event) => event.currentTarget.select()}
+                  data-testid="draft-wall-length"
+                  aria-label="그릴 벽 길이"
+                />
+                <span>cm</span>
+              </div>
+              <button type="submit" aria-label="정확한 길이 적용" title="정확한 길이 적용">
+                <Check size={16} />
+              </button>
+            </form>
+          )}
+
           <svg
             ref={canvasRef}
-            className={`cad-canvas tool-${tool}`}
+            className={`cad-canvas tool-${effectiveTool}`}
             data-testid="cad-canvas"
+            data-effective-tool={effectiveTool}
             onPointerDown={handleCanvasPointerDown}
             onPointerMove={handleCanvasPointerMove}
             onPointerUp={handleCanvasPointerUp}
@@ -1270,7 +1580,7 @@ function App() {
                     className={`room-floor ${selectedFloor ? 'selected' : ''}`}
                     data-testid="floor-polygon"
                     onPointerDown={(event) => {
-                      if (tool === 'select') {
+                      if (effectiveTool === 'select') {
                         event.stopPropagation()
                         setSelected({ type: 'floor' })
                       }
@@ -1282,7 +1592,7 @@ function App() {
                       y={floorLabelPoint.y}
                       className={`floor-label ${selectedFloor ? 'selected' : ''}`}
                       onPointerDown={(event) => {
-                        if (tool === 'select') {
+                        if (effectiveTool === 'select') {
                           event.stopPropagation()
                           setSelected({ type: 'floor' })
                         }
@@ -1307,13 +1617,16 @@ function App() {
                       className={`wall-line ${isSelected ? 'selected' : ''}`}
                       strokeWidth={wall.thicknessCm}
                       onPointerDown={(event) => {
+                        if (effectiveTool === 'pan') {
+                          return
+                        }
                         event.stopPropagation()
-                        if (tool === 'door' || tool === 'window') {
-                          placeOpening(tool, screenToWorld(event.clientX, event.clientY))
+                        if (effectiveTool === 'door' || effectiveTool === 'window') {
+                          placeOpening(effectiveTool, screenToWorld(event.clientX, event.clientY))
                           return
                         }
                         setSelected({ type: 'wall', id: wall.id })
-                        if (tool === 'select') {
+                        if (effectiveTool === 'select') {
                           setDrag({
                             type: 'wall',
                             wallId: wall.id,
@@ -1330,6 +1643,9 @@ function App() {
                       className={`dimension-label ${isSelected ? 'selected' : ''}`}
                       transform={`rotate(${angleDeg(wall.start, wall.end)} ${mid.x} ${mid.y - 14})`}
                       onPointerDown={(event) => {
+                        if (effectiveTool === 'pan') {
+                          return
+                        }
                         event.stopPropagation()
                         setSelected({ type: 'wall', id: wall.id })
                       }}
@@ -1344,6 +1660,9 @@ function App() {
                           r={8 / viewport.zoom}
                           className="endpoint-handle"
                           onPointerDown={(event) => {
+                            if (effectiveTool === 'pan') {
+                              return
+                            }
                             event.stopPropagation()
                             setDrag({
                               type: 'endpoint',
@@ -1360,6 +1679,9 @@ function App() {
                           r={8 / viewport.zoom}
                           className="endpoint-handle"
                           onPointerDown={(event) => {
+                            if (effectiveTool === 'pan') {
+                              return
+                            }
                             event.stopPropagation()
                             setDrag({
                               type: 'endpoint',
@@ -1388,9 +1710,12 @@ function App() {
                     transform={`translate(${placement.point.x} ${placement.point.y}) rotate(${placement.angle})`}
                     className={`opening ${opening.type} ${selectedOpeningId ? 'selected' : ''}`}
                     onPointerDown={(event) => {
+                      if (effectiveTool === 'pan') {
+                        return
+                      }
                       event.stopPropagation()
                       setSelected({ type: 'opening', id: opening.id })
-                      if (tool === 'select') {
+                      if (effectiveTool === 'select') {
                         setDrag({
                           type: 'opening',
                           openingId: opening.id,
@@ -1415,10 +1740,17 @@ function App() {
                     key={asset.id}
                     transform={`translate(${asset.x} ${asset.y}) rotate(${asset.rotationDeg})`}
                     className={`asset ${assetSelected ? 'selected' : ''}`}
+                    data-testid="asset-item"
+                    data-x={asset.x}
+                    data-y={asset.y}
+                    data-rotation={asset.rotationDeg}
                     onPointerDown={(event) => {
+                      if (effectiveTool === 'pan') {
+                        return
+                      }
                       event.stopPropagation()
                       setSelected({ type: 'asset', id: asset.id })
-                      if (tool === 'select' || tool === 'furniture') {
+                      if (effectiveTool === 'select' || effectiveTool === 'furniture') {
                         const worldPoint = screenToWorld(event.clientX, event.clientY)
                         setDrag({
                           type: 'asset',
@@ -1833,6 +2165,74 @@ function App() {
             {savedAt && <p className="saved-at">마지막 저장 {savedAt}</p>}
           </section>
       </section>
+
+      {commandOpen && (
+        <div
+          className="command-overlay"
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closeCommandPalette()
+            }
+          }}
+        >
+          <section className="command-palette" role="dialog" aria-modal="true" aria-label="명령 팔레트">
+            <header className="command-header">
+              <Command size={18} />
+              <input
+                ref={commandInputRef}
+                value={commandQuery}
+                onChange={(event) => {
+                  setCommandQuery(event.target.value)
+                  setCommandIndex(0)
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'ArrowDown') {
+                    event.preventDefault()
+                    setCommandIndex((current) => Math.min(current + 1, Math.max(0, filteredCommands.length - 1)))
+                  } else if (event.key === 'ArrowUp') {
+                    event.preventDefault()
+                    setCommandIndex((current) => Math.max(current - 1, 0))
+                  } else if (event.key === 'Enter') {
+                    event.preventDefault()
+                    const command = filteredCommands[commandIndex]
+                    if (command) {
+                      runCommand(command)
+                    }
+                  } else if (event.key === 'Escape') {
+                    event.preventDefault()
+                    closeCommandPalette()
+                  }
+                }}
+                placeholder="명령 검색"
+                aria-label="명령 검색"
+                data-testid="command-search"
+              />
+              <button type="button" className="icon-button" onClick={closeCommandPalette} aria-label="명령 팔레트 닫기">
+                <X size={17} />
+              </button>
+            </header>
+            <div className="command-list" role="listbox">
+              {filteredCommands.map((item, index) => (
+                <button
+                  type="button"
+                  key={item.id}
+                  className={index === commandIndex ? 'active' : ''}
+                  disabled={item.disabled}
+                  onMouseEnter={() => setCommandIndex(index)}
+                  onClick={() => runCommand(item)}
+                  role="option"
+                  aria-selected={index === commandIndex}
+                  data-testid={`command-${item.id}`}
+                >
+                  <span>{item.label}</span>
+                  <kbd>{item.shortcut}</kbd>
+                </button>
+              ))}
+              {filteredCommands.length === 0 && <p className="command-empty">일치하는 명령 없음</p>}
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   )
 }
@@ -1894,6 +2294,7 @@ function ThreePreview({
   const planRef = useRef(plan)
   const onSelectRef = useRef(onSelect)
   const [viewMode, setViewMode] = useState<ThreeViewMode>('orbit')
+  const [wallXRay, setWallXRay] = useState(true)
   const [cameraFitRequest, setCameraFitRequest] = useState(0)
 
   useEffect(() => {
@@ -2092,6 +2493,9 @@ function ThreePreview({
       const material = new THREE.MeshStandardMaterial({
         color: selectedWall ? '#486d8f' : '#f4efe5',
         roughness: 0.58,
+        transparent: wallXRay,
+        opacity: wallXRay ? (selectedWall ? 0.72 : 0.46) : 1,
+        depthWrite: !wallXRay,
       })
       const mesh = new THREE.Mesh(geometry, material)
       const mid = midpoint(wall.start, wall.end)
@@ -2153,7 +2557,7 @@ function ThreePreview({
       hasFramedPlanRef.current = true
     }
     renderer.render(scene, camera)
-  }, [plan, polygon, selected, viewMode])
+  }, [plan, polygon, selected, viewMode, wallXRay])
 
   useEffect(() => {
     const camera = cameraRef.current
@@ -2192,6 +2596,17 @@ function ThreePreview({
               {mode === 'orbit' ? '입체' : mode === 'top' ? '평면' : '눈높이'}
             </button>
           ))}
+          <button
+            type="button"
+            className={`view-mode-button xray-button ${wallXRay ? 'active' : ''}`}
+            onClick={() => setWallXRay((current) => !current)}
+            aria-label={wallXRay ? '벽 투시 끄기' : '벽 투시 켜기'}
+            aria-pressed={wallXRay}
+            title={wallXRay ? '벽 투시 끄기' : '벽 투시 켜기'}
+            data-testid="wall-xray"
+          >
+            {wallXRay ? <Eye size={15} /> : <EyeOff size={15} />}
+          </button>
           <button
             type="button"
             className="view-mode-button"

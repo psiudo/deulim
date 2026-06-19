@@ -52,6 +52,26 @@ h2 {
   gap: 8px;
 }
 
+.autosave-status {
+  color: #657068;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.command-trigger {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #cfc7b8;
+  border-radius: 7px;
+  padding: 0 11px;
+  background: #fffaf0;
+  color: #303a34;
+  cursor: pointer;
+  font-weight: 800;
+}
+
 .workspace {
   min-height: 0;
   display: grid;
@@ -102,6 +122,19 @@ button {
   font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tool-button kbd {
+  margin-left: auto;
+  color: #a9b4ad;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.tool-button.active kbd,
+.tool-button:hover kbd {
+  color: #31514b;
 }
 
 .tool-button:hover,
@@ -198,11 +231,73 @@ button {
 }
 
 .canvas-panel {
+  position: relative;
   min-width: 0;
   min-height: 0;
   display: grid;
   grid-template-rows: 48px 1fr;
   background: #dfd8ca;
+}
+
+.precision-hud {
+  position: absolute;
+  z-index: 5;
+  top: 62px;
+  left: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid #b9ad9b;
+  border-radius: 7px;
+  background: rgba(255, 252, 244, 0.96);
+  box-shadow: 0 8px 24px rgba(50, 42, 30, 0.14);
+}
+
+.precision-hud > label {
+  display: block;
+  margin: 0;
+  color: #34423a;
+  font-size: 12px;
+}
+
+.precision-input-wrap {
+  width: 116px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  border: 1px solid #cfc7b8;
+  border-radius: 6px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.precision-input-wrap input {
+  height: 30px;
+  border: 0;
+  border-radius: 0;
+  padding-right: 3px;
+  text-align: right;
+  font-weight: 900;
+}
+
+.precision-input-wrap span {
+  padding: 0 8px 0 4px;
+  color: #697169;
+  font-size: 11px;
+}
+
+.precision-hud > button {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: #2f7f6f;
+  color: #ffffff;
+  cursor: pointer;
 }
 
 .canvas-toolbar {
@@ -582,6 +677,11 @@ input:focus {
   border-color: #2f7f6f;
 }
 
+.xray-button {
+  width: 30px;
+  padding: 0;
+}
+
 .scene-status.ready {
   color: #173d39;
   background: #d9f1e5;
@@ -600,6 +700,103 @@ input:focus {
   width: 100%;
   height: 100%;
   display: block;
+}
+
+.command-overlay {
+  position: fixed;
+  z-index: 40;
+  inset: 0;
+  display: grid;
+  place-items: start center;
+  padding-top: min(18vh, 150px);
+  background: rgba(25, 30, 27, 0.38);
+  backdrop-filter: blur(2px);
+}
+
+.command-palette {
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(620px, 70vh);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid #bdb4a7;
+  border-radius: 8px;
+  background: #fbf8f1;
+  box-shadow: 0 24px 70px rgba(18, 23, 20, 0.28);
+}
+
+.command-header {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border-bottom: 1px solid #d8d1c4;
+}
+
+.command-header > svg {
+  color: #667168;
+}
+
+.command-header input {
+  height: 38px;
+  border: 0;
+  background: transparent;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.command-header input:focus {
+  outline: 0;
+}
+
+.command-list {
+  overflow: auto;
+  padding: 6px;
+}
+
+.command-list > button {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 11px;
+  background: transparent;
+  color: #26312b;
+  cursor: pointer;
+  font-weight: 800;
+  text-align: left;
+}
+
+.command-list > button.active {
+  background: #e4eee7;
+}
+
+.command-list > button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.command-list kbd {
+  min-width: 34px;
+  border: 1px solid #cec7bb;
+  border-radius: 5px;
+  padding: 2px 6px;
+  background: #fffdf8;
+  color: #626b64;
+  font-family: inherit;
+  font-size: 11px;
+  text-align: center;
+}
+
+.command-empty {
+  margin: 20px;
+  color: #737b74;
+  text-align: center;
 }
 
 @media (max-width: 1080px) {

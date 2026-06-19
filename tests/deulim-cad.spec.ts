@@ -92,6 +92,12 @@ test('draws an L shaped room, edits dimensions, syncs 3D, saves, restores, and r
   await expect(page.getByTestId('three-status')).toContainText('3D 방 생성')
   await expect(page.getByTestId('three-status')).toHaveAttribute('data-wall-count', '6')
   await expect(page.getByTestId('three-view').locator('canvas')).toBeVisible()
+  const wallXRay = page.getByTestId('wall-xray')
+  await expect(wallXRay).toHaveAttribute('aria-pressed', 'true')
+  await wallXRay.click()
+  await expect(wallXRay).toHaveAttribute('aria-pressed', 'false')
+  await wallXRay.click()
+  await expect(wallXRay).toHaveAttribute('aria-pressed', 'true')
   await expectThreeCanvasSignal(page)
 
   const threeView = page.getByTestId('three-view')
@@ -163,4 +169,63 @@ test('keeps the generated 3D scene visible on a mobile viewport', async ({ page 
   await expect(page.getByTestId('three-view').locator('canvas')).toBeVisible()
   await expectThreeCanvasSignal(page)
   await page.screenshot({ path: testInfo.outputPath('mobile-cad-3d.png'), fullPage: true })
+})
+
+test('supports keyboard-first precise drawing and object commands', async ({ page }) => {
+  await page.goto('/')
+  await page.evaluate(() => localStorage.clear())
+  await page.reload()
+
+  await clickCanvas(page, 200, 200)
+  const canvas = page.getByTestId('cad-canvas')
+  const canvasBox = await canvas.boundingBox()
+  if (!canvasBox) {
+    throw new Error('CAD canvas was not visible')
+  }
+  await page.mouse.move(canvasBox.x + 500, canvasBox.y + 200)
+  await page.keyboard.press('2')
+
+  const exactLength = page.getByTestId('draft-wall-length')
+  await expect(exactLength).toBeFocused()
+  await expect(exactLength).toHaveValue('2')
+  await exactLength.fill('250')
+  await exactLength.press('Enter')
+  await expect(page.getByTestId('drawing-status')).toContainText('2점')
+
+  await page.keyboard.press('Enter')
+  await expect(page.getByTestId('wall-count')).toContainText('벽 1')
+  await expect(page.getByText('250cm', { exact: true })).toBeVisible()
+
+  await page.keyboard.press('v')
+  await expect(canvas).toHaveAttribute('data-effective-tool', 'select')
+
+  await page.keyboard.press('Control+k')
+  await expect(page.getByRole('dialog', { name: '명령 팔레트' })).toBeVisible()
+  const commandSearch = page.getByTestId('command-search')
+  await commandSearch.fill('문')
+  await commandSearch.press('Enter')
+  await expect(canvas).toHaveAttribute('data-effective-tool', 'door')
+
+  await page.keyboard.press('b')
+  await expect(canvas).toHaveAttribute('data-effective-tool', 'furniture')
+  await clickCanvas(page, 350, 300)
+  await expect(page.getByTestId('asset-count')).toContainText('가구 1')
+
+  const asset = page.getByTestId('asset-item')
+  await expect(asset).toHaveAttribute('data-x', '190')
+  await expect(asset).toHaveAttribute('data-y', '190')
+  await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('Shift+ArrowDown')
+  await expect(asset).toHaveAttribute('data-x', '191')
+  await expect(asset).toHaveAttribute('data-y', '200')
+
+  await page.keyboard.press('r')
+  await expect(asset).toHaveAttribute('data-rotation', '15')
+  await page.keyboard.press('Control+d')
+  await expect(page.getByTestId('asset-count')).toContainText('가구 2')
+
+  await page.keyboard.down('Space')
+  await expect(canvas).toHaveAttribute('data-effective-tool', 'pan')
+  await page.keyboard.up('Space')
+  await expect(canvas).toHaveAttribute('data-effective-tool', 'furniture')
 })
